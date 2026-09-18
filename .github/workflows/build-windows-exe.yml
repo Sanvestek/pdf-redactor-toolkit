@@ -1,3 +1,5 @@
+# Trigger re-scan: GitHub occasionally doesn't register a workflow file that
+# was part of a repo's initial push until a later push specifically touches it.
 name: Build Windows demo exe
 
 on:
