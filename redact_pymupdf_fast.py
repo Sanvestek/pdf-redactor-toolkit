@@ -585,10 +585,14 @@ def redact_pdf(input_file, output_file, names_file, boilerplate_graphics, boiler
         manual_global_terms = []
 
     # Emails/phones: if a curated exact-value file is given, redact ONLY those specific values
-    # (matched like names, via exact search) - nothing else. Otherwise fall back to the blanket
-    # regex scan below, which catches anything matching the pattern regardless of review.
-    emails_to_redact = load_names_from_file(emails_file) if (redact_emails and emails_file) else []
-    phones_to_redact = load_names_from_file(phones_file) if (redact_phones and phones_file) else []
+    # (matched like names, via exact search) - nothing else, even if the file is empty (an empty
+    # curated list means "nothing curated yet", not "no list was given"). Only when no file path
+    # is given at all do we fall back to the blanket regex scan below, which catches anything
+    # matching the pattern regardless of review.
+    emails_file_given = bool(redact_emails and emails_file)
+    phones_file_given = bool(redact_phones and phones_file)
+    emails_to_redact = load_names_from_file(emails_file) if emails_file_given else []
+    phones_to_redact = load_names_from_file(phones_file) if phones_file_given else []
 
     if redact_names:
         names_to_redact = load_names_from_file(names_file)
@@ -709,7 +713,7 @@ def redact_pdf(input_file, output_file, names_file, boilerplate_graphics, boiler
             for value in emails_to_redact:
                 for r in page.search_for(value):
                     redact_rects_set.add(tuple(r))
-          elif redact_emails:
+          elif redact_emails and not emails_file_given:
             for email_rect in find_email_rects_from_words(words):
                 redact_rects_set.add(tuple(email_rect))
 
@@ -721,11 +725,12 @@ def redact_pdf(input_file, output_file, names_file, boilerplate_graphics, boiler
 
           # --- B. Redact other entities using SPAN-LEVEL text extraction (Most Robust) ---
           # LinkedIn is always checked. Email/phone regexes only run here in blanket mode - i.e. when
-          # no curated list was given for that category - since a curated list is already exact.
+          # no curated list was given for that category at all - since an empty curated list means
+          # "nothing checked yet", not "fall back to blanket". A curated list is already exact.
           entity_patterns = []
-          if redact_emails and not emails_to_redact:
+          if redact_emails and not emails_file_given:
             entity_patterns.append(("Email", EMAIL_REGEX))
-          if redact_phones and not phones_to_redact:
+          if redact_phones and not phones_file_given:
             entity_patterns.append(("Phone", PHONE_REGEX))
           entity_patterns.append(("LinkedIn", LINKEDIN_REGEX))
 
