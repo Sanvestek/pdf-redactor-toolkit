@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+/build
+/dist
+/pdf_redactor.egg-info
+/.eggs
+/.tox
+/venv
+/.venv
+.pytest_cache/
+
+# PDFs uploaded through the web UI's "Upload from my computer" feature.
+/uploads/
+
+# This repo intentionally ships zero real personal data - only the fabricated demo_data/.
+# These patterns are a backstop against ever accidentally committing a real extracted list
+# or a real PDF outside demo_data/ into this public repo.
+*_to_redact*.txt
+*_names_list*.txt
+MASTER_NAMES_LIST*
+!demo_data/names_to_redact.txt
+!demo_data/emails_to_redact.txt
+!demo_data/phones_to_redact.txt
+/*.pdf
+demo_data/redacted/

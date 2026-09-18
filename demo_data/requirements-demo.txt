@@ -1,0 +1,4 @@
+# Only needed to regenerate the synthetic demo PDFs (demo_data/generate_demo_pdfs.py).
+# Not required to run the redaction tool itself - the generated PDFs are already
+# committed under demo_data/raw/.
+reportlab==5.0.1

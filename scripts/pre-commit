@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Blocks committing anything that looks like real extracted personal data.
+
+Structural check only (filenames/paths), not content scanning - deliberately simple and
+deterministic. Install with: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+"""
+import re
+import subprocess
+import sys
+
+ALLOWED_PDF_PREFIX = "demo_data/raw/"
+
+BANNED_PATTERNS = [
+    re.compile(r"(^|/)MASTER_NAMES_LIST"),
+    re.compile(r"(^|/)[^/]*_to_redact[^/]*\.txt$"),
+    re.compile(r"(^|/)uploads/"),
+]
+
+
+def staged_files():
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        capture_output=True, text=True, check=True,
+    )
+    return [line for line in out.stdout.splitlines() if line]
+
+
+def main():
+    blocked = []
+    for path in staged_files():
+        if path.lower().endswith(".pdf") and not path.startswith(ALLOWED_PDF_PREFIX):
+            blocked.append((path, f"PDF outside {ALLOWED_PDF_PREFIX} - this repo ships no real documents"))
+            continue
+        if path in ("demo_data/names_to_redact.txt", "demo_data/emails_to_redact.txt",
+                     "demo_data/phones_to_redact.txt"):
+            continue
+        for pattern in BANNED_PATTERNS:
+            if pattern.search(path):
+                blocked.append((path, "matches a real-data filename pattern"))
+                break
+
+    if blocked:
+        print("pre-commit: refusing to commit - looks like real data:\n", file=sys.stderr)
+        for path, reason in blocked:
+            print(f"  {path}  ({reason})", file=sys.stderr)
+        print("\nIf this is genuinely fabricated demo data, rename it or adjust scripts/pre-commit.",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

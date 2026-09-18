@@ -1,0 +1,7 @@
+# One phrase per line - text that must never be redacted, even if it matches a name/email/phone
+# rule elsewhere (e.g. common phrases that look like a Title-Case name, or a company name that
+# happens to also be someone's surname). Starter/example list - edit freely for your own documents.
+White Label
+Off White
+Enterprise Ireland
+Science Foundation Ireland
