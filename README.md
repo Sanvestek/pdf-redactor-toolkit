@@ -193,10 +193,18 @@ field values and document outline/bookmark titles also aren't scanned.
 
 If you use this tool on your own documents locally, keep any real extracted
 name/email/phone lists and real PDFs out of commits to this repo — everything
-here is meant to stay fabricated demo data. `scripts/pre-commit` is a simple
-guard against accidentally committing anything that looks like real extracted
-data; enable it with:
+here is meant to stay fabricated demo data. `scripts/pre-commit` guards
+against accidentally committing anything that looks like real extracted data
+(disallowed filenames like a stray PDF or `*_to_redact*.txt`, plus a content
+scan of the staged diff for email/phone-shaped strings that aren't the
+`@example.com` / `+353 1 555 0xxx` demo patterns); enable it as a real git
+hook with:
 
 ```
 ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 ```
+
+`.claude/settings.json` also wires the same script in as a Claude Code
+PreToolUse hook (`scripts/claude_git_guard.py`), so `git commit`/`git push`
+run through Claude Code are checked even if the git hook above was never
+installed, or was bypassed with `--no-verify`.

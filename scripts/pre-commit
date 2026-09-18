@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
-"""Blocks committing anything that looks like real extracted personal data.
+"""Blocks committing/pushing anything that looks like real extracted personal data.
 
-Structural check only (filenames/paths), not content scanning - deliberately simple and
-deterministic. Install with: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+Runs in two contexts:
+  1. As the actual git hook (no args - git always invokes hooks/pre-commit bare),
+     installed with: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+  2. As a Claude Code PreToolUse hook (see .claude/settings.json), invoked with an
+     explicit "commit" or "push" argument before Claude's Bash tool runs a matching
+     git command - this covers the case where the git hook above was never installed
+     (a fresh clone/environment) or was bypassed with --no-verify, and also re-checks
+     at push time since a bad commit could in principle predate this hook.
+
+Two kinds of check:
+  - Filenames/paths of staged (or, in push mode, outgoing) files - structural, exact.
+  - Added-line content of the diff, for email/phone-shaped strings that aren't the
+    known @example.com / +353 1 555 0xxx demo patterns. This is a heuristic, not a
+    real PII detector - it exists to catch the common accidental case (an extracted
+    candidate value pasted into a random text file), not to be exhaustive.
+
+Exit code 2 on a block: a plain nonzero also aborts a real git hook, and 2 is what
+Claude Code's PreToolUse hooks treat as "blocking" (stderr is shown, the action is
+refused) - the same exit code works correctly in both contexts.
 """
 import re
 import subprocess
@@ -10,42 +27,125 @@ import sys
 
 ALLOWED_PDF_PREFIX = "demo_data/raw/"
 
+ALLOWED_LIST_FILES = {
+    "demo_data/names_to_redact.txt",
+    "demo_data/emails_to_redact.txt",
+    "demo_data/phones_to_redact.txt",
+}
+
 BANNED_PATTERNS = [
     re.compile(r"(^|/)MASTER_NAMES_LIST"),
     re.compile(r"(^|/)[^/]*_to_redact[^/]*\.txt$"),
+    re.compile(r"(^|/)new(_[a-z]+)?\.txt$", re.IGNORECASE),
     re.compile(r"(^|/)uploads/"),
 ]
 
+# Real email/phone values look like arbitrary strings; the only thing distinguishing
+# "known-safe demo value" from "something real slipped in" is that the demo data was
+# deliberately seeded on these two patterns (see demo_data/*_to_redact.txt).
+EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+\.[\w.-]+)")
+SAFE_EMAIL_DOMAIN_RE = re.compile(r"^example\.com$", re.IGNORECASE)
+# Trailing x/X alongside digits so a placeholder like "0xxx" (used in prose describing this
+# very pattern, e.g. README.md/this file's own docstring) is captured as part of one match
+# rather than truncated at the last real digit - see SAFE_PHONE_RE below, which recognizes
+# both the concrete demo numbers and that literal placeholder shape as equally safe.
+PHONE_RE = re.compile(r"(?<![\w@.])(\+?[\d][\d\-. ()xX]{6,}[\dxX])(?![\w@.])")
+SAFE_PHONE_RE = re.compile(r"^\+353 1 555 0(\d{3}|[xX]{3})$")
 
-def staged_files():
-    out = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-        capture_output=True, text=True, check=True,
-    )
-    return [line for line in out.stdout.splitlines() if line]
+# The regex definition line just above ("...555 0(\d{3}|...") is itself, in this file's own
+# diff, a phone-shaped-but-truncated match: PHONE_RE stops at the last real digit before the
+# regex syntax "(" that follows it here, so this exact prefix is safelisted by name rather
+# than by pattern - it's an artifact of quoting our own pattern, never a real number anywhere
+# else in this codebase.
+SAFE_PHONE_LITERALS = {"+353 1 555 0"}
 
 
-def main():
+def run_git(*args):
+    # errors="replace": a staged binary file (e.g. a stray PDF) makes `git diff` emit
+    # non-UTF-8 bytes even though we ask for a name-only/text diff - decode failures here
+    # must not crash the check itself.
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, errors="replace", check=False
+    ).stdout
+
+
+def changed_files(diff_range_args):
+    out = run_git("diff", *diff_range_args, "--name-only", "--diff-filter=ACM")
+    return [line for line in out.splitlines() if line]
+
+
+def diff_content(diff_range_args):
+    return run_git("diff", *diff_range_args)
+
+
+def check_filenames(paths):
     blocked = []
-    for path in staged_files():
+    for path in paths:
         if path.lower().endswith(".pdf") and not path.startswith(ALLOWED_PDF_PREFIX):
             blocked.append((path, f"PDF outside {ALLOWED_PDF_PREFIX} - this repo ships no real documents"))
             continue
-        if path in ("demo_data/names_to_redact.txt", "demo_data/emails_to_redact.txt",
-                     "demo_data/phones_to_redact.txt"):
+        if path in ALLOWED_LIST_FILES:
             continue
         for pattern in BANNED_PATTERNS:
             if pattern.search(path):
                 blocked.append((path, "matches a real-data filename pattern"))
                 break
+    return blocked
+
+
+def check_content(diff_text):
+    blocked = []
+    for line in diff_text.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        added = line[1:]
+        for m in EMAIL_RE.finditer(added):
+            if not SAFE_EMAIL_DOMAIN_RE.match(m.group(1)):
+                blocked.append((m.group(0), "email-looking string with a non-demo domain"))
+        for m in PHONE_RE.finditer(added):
+            value = m.group(1).strip()
+            if value in SAFE_PHONE_LITERALS or SAFE_PHONE_RE.match(value):
+                continue
+            digits = re.sub(r"\D", "", value)
+            if 7 <= len(digits) <= 15:
+                blocked.append((value, "phone-looking string that isn't the demo pattern"))
+    return blocked
+
+
+def diff_range_for(mode):
+    if mode == "commit":
+        return ["--cached"]
+    if mode == "push":
+        upstream = run_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").strip()
+        if not upstream:
+            print(
+                "pre-commit: no upstream tracking branch, skipping push-time content re-check "
+                "(the commit-time check already covers this repo's history).",
+                file=sys.stderr,
+            )
+            return None
+        return [f"{upstream}...HEAD"]
+    print(f"pre-commit: unknown mode {mode!r}, skipping", file=sys.stderr)
+    return None
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "commit"
+    diff_range = diff_range_for(mode)
+    if diff_range is None:
+        return 0
+
+    blocked = check_filenames(changed_files(diff_range)) + check_content(diff_content(diff_range))
 
     if blocked:
-        print("pre-commit: refusing to commit - looks like real data:\n", file=sys.stderr)
-        for path, reason in blocked:
-            print(f"  {path}  ({reason})", file=sys.stderr)
-        print("\nIf this is genuinely fabricated demo data, rename it or adjust scripts/pre-commit.",
-              file=sys.stderr)
-        return 1
+        print("pre-commit: refusing - this looks like real data, not fabricated demo data:\n", file=sys.stderr)
+        for value, reason in blocked:
+            print(f"  {value}  ({reason})", file=sys.stderr)
+        print(
+            "\nIf this is genuinely fabricated demo data, adjust the allowlists in scripts/pre-commit.",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 

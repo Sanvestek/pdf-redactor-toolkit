@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/claude_git_guard.py",
+            "statusMessage": "Checking for real PII before git commit/push..."
+          }
+        ]
+      }
+    ]
+  }
+}

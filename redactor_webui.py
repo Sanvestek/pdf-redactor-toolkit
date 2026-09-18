@@ -193,13 +193,31 @@ def compute_confidence(item, weights):
 def annotate(items, weights):
     """Returns a copy of items with 'confidence' and 'ambiguous' computed fresh against the
     current weights, without mutating the stored candidates - so changing the weights in the UI
-    re-labels the existing list immediately without needing to re-extract."""
+    re-labels the existing list immediately without needing to re-extract.
+
+    Also propagates High confidence from a multi-word name down to its own single-word
+    components: "Priya Nandakumar" scoring High is exactly the same evidence that "Priya" and
+    "Nandakumar" alone (extracted separately - see extract_names_from_text's decomposition step)
+    refer to a real person, so they shouldn't sit in the low-confidence pile just because they
+    also appear standalone somewhere in the document, with none of the multi-word bonus that
+    scored the full name."""
     out = []
     for it in items:
         copy = dict(it)
         copy["confidence"] = compute_confidence(it, weights)
         copy["ambiguous"] = is_ambiguous(it)
         out.append(copy)
+
+    high_name_components = set()
+    for it in out:
+        if it["kind"] == "name" and it["confidence"] == "High" and len(it["value"].split()) >= 2:
+            high_name_components.update(it["value"].split())
+
+    for it in out:
+        if (it["kind"] == "name" and it["confidence"] != "High"
+                and len(it["value"].split()) == 1 and it["value"] in high_name_components):
+            it["confidence"] = "High"
+
     return out
 
 
