@@ -1,9 +1,28 @@
 # PDF Redactor
 
+[![License: AGPL v3](https://img.shields.io/github/license/Sanvestek/pdf-redaction-toolkit)](LICENSE)
+[![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![Build Windows exe](https://github.com/Sanvestek/pdf-redaction-toolkit/actions/workflows/build-windows-exe.yml/badge.svg?branch=exe)](https://github.com/Sanvestek/pdf-redaction-toolkit/actions/workflows/build-windows-exe.yml)
+
+A free, local-first PDF redaction tool — no uploads, no cloud — that actually removes content instead of drawing a black box on top of it.
+
+If you searched for a way to redact a PDF for free, remove personal information
+from a PDF, or you specifically need an offline PDF redaction / PDF PII removal
+tool that never uploads your document anywhere, that's exactly what this is.
+
 Redacts names, emails, phone numbers, LinkedIn links, signatures, and repeated
 header/footer boilerplate from PDFs using PyMuPDF. Redaction happens at the
 content-stream level (not a black box drawn on top), and document metadata is
 scrubbed on save.
+
+<!--
+  Replace this with a real screenshot or short GIF of the web UI once you have
+  one — see the "Screenshot / GIF" section of docs/ (or the PR/commit that added
+  this comment) for exactly how to capture and drop it in. Recommended shot: the
+  Review page's confidence-tiered candidate list (section 2 in the web UI), or a
+  short GIF of the interactive click-to-redact flow (section 5).
+-->
+![PDF Redactor web UI — reviewing auto-detected names, emails and phone numbers by confidence before redacting](docs/screenshot.png)
 
 > This repo contains no real documents or personal data, in the working tree or
 > in its git history — only the tool's code and a fabricated demo case (see
@@ -208,3 +227,14 @@ ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 PreToolUse hook (`scripts/claude_git_guard.py`), so `git commit`/`git push`
 run through Claude Code are checked even if the git hook above was never
 installed, or was bypassed with `--no-verify`.
+
+## License
+
+PDF Redactor — a local-first PDF redaction tool.
+Copyright (C) 2026 Sanvestek
+
+Licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0)
+or later. This is copyleft: you're free to use, modify, and redistribute this
+tool (including running a modified version as a hosted service), but any
+distributed or hosted modified version must also be released under the AGPL-3.0
+with its source available. See the [LICENSE](LICENSE) file for the full text.
