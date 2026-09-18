@@ -1,8 +1,8 @@
 # PDF Redactor
 
-[![License: AGPL v3](https://img.shields.io/github/license/Sanvestek/pdf-redaction-toolkit)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/github/license/Sanvestek/pdf-redactor-toolkit)](LICENSE)
 [![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
-[![Build Windows exe](https://github.com/Sanvestek/pdf-redaction-toolkit/actions/workflows/build-windows-exe.yml/badge.svg?branch=exe)](https://github.com/Sanvestek/pdf-redaction-toolkit/actions/workflows/build-windows-exe.yml)
+[![Build Windows exe](https://github.com/Sanvestek/pdf-redactor-toolkit/actions/workflows/build-windows-exe.yml/badge.svg?branch=exe)](https://github.com/Sanvestek/pdf-redactor-toolkit/actions/workflows/build-windows-exe.yml)
 
 A free, local-first PDF redaction tool — no uploads, no cloud — that actually removes content instead of drawing a black box on top of it.
 
@@ -22,7 +22,7 @@ scrubbed on save.
   Review page's confidence-tiered candidate list (section 2 in the web UI), or a
   short GIF of the interactive click-to-redact flow (section 5).
 -->
-![PDF Redactor web UI — reviewing auto-detected names, emails and phone numbers by confidence before redacting](docs/screenshot.png)
+![PDF Redactor web UI — reviewing auto-detected names, emails and phone numbers by confidence before redacting](docs/redactor-screenshot.png)
 
 > This repo contains no real documents or personal data, in the working tree or
 > in its git history — only the tool's code and a fabricated demo case (see
