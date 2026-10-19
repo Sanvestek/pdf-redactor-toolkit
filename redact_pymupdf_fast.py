@@ -262,6 +262,90 @@ def build_name_search_pattern(name):
     return re.compile(r'\s*'.join(re.escape(w) for w in words), re.IGNORECASE)
 
 
+# Unicode punctuation a PDF uses interchangeably with its ASCII equivalent. A name typed with a
+# straight apostrophe in the list must still match "O’Whitmore" typeset with a curly one, and a
+# non-breaking space between two name parts has to behave like an ordinary space. Every entry maps
+# one character to exactly one character, so translating a string never shifts its indices - the
+# character-to-bbox alignment in find_name_rects() depends on that.
+_PUNCT_NORMALISE = str.maketrans({
+    "\u2018": "'", "\u2019": "'", "\u02bc": "'", "\u00b4": "'",
+    "\u201c": '"', "\u201d": '"',
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
+    "\u00a0": " ", "\u2007": " ", "\u202f": " ",
+})
+
+
+def normalise_for_match(text):
+    """Curly quotes and dashes -> ASCII, exotic spaces -> plain spaces, so a list entry and the
+    page text are compared on equal terms."""
+    return text.translate(_PUNCT_NORMALISE)
+
+
+def build_name_match_regex(name):
+    """A regex matching `name` wherever a reader would see that name, including where the PDF has
+    glued it to neighbouring punctuation.
+
+    The boundaries are alphanumeric lookarounds rather than \\b, and only on the ends that are
+    themselves alphanumeric. "Elena" must still be found in "Contact Name:Elena" - a real extraction
+    artifact, where the colon leaves no space - and "E.V." must match despite its own trailing dot,
+    while "Del" must never match inside "Delivery". Parts are joined by \\s* so a name broken over a
+    line break or padded with a double space still matches as one name.
+    """
+    normalised = normalise_for_match(name).strip()
+    parts = [re.escape(p) for p in normalised.split()]
+    if not parts:
+        return None
+    lead = r'(?<![0-9A-Za-z])' if normalised[:1].isalnum() else ''
+    trail = r'(?![0-9A-Za-z])' if normalised[-1:].isalnum() else ''
+    return re.compile(lead + r'\s*'.join(parts) + trail, re.IGNORECASE)
+
+
+def find_name_rects(page, name_patterns):
+    """Rectangles covering every listed name on `page`, matched over the page's real character
+    stream instead of over whitespace-split word tokens.
+
+    page.get_text("words") splits on whitespace alone, so "Contact Name:Elena" arrives as the single
+    token "Name:Elena"; stripping punctuation from the ends of that token still leaves "name:elena",
+    which no token-equality test can match against "Elena". The name survives redaction while the
+    verify pass, which reads plain page text, keeps reporting it - the two never agree. Walking the
+    characters removes the disagreement: each block is reassembled with one bbox per character, the
+    name patterns run over that text, and a match gives back the union of exactly the characters it
+    covered. Matches are unioned per line, so a name wrapped across a line break produces one rect
+    per line rather than one tall rect blacking out everything between them.
+    """
+    rects = []
+    for block in page.get_text("rawdict")["blocks"]:
+        if "lines" not in block:
+            continue
+
+        pieces = []
+        char_boxes = []  # (line index, bbox) per character; the joining newlines carry no bbox
+        for line_idx, line in enumerate(block["lines"]):
+            if pieces:
+                pieces.append("\n")
+                char_boxes.append((line_idx, None))
+            for span in line["spans"]:
+                for ch in span["chars"]:
+                    pieces.append(ch["c"])
+                    char_boxes.append((line_idx, ch["bbox"]))
+        if not pieces:
+            continue
+
+        text = normalise_for_match("".join(pieces))
+
+        for pattern in name_patterns:
+            for match in pattern.finditer(text):
+                per_line = {}
+                for idx in range(match.start(), match.end()):
+                    line_idx, bbox = char_boxes[idx]
+                    if bbox is None:
+                        continue
+                    rect = fitz.Rect(bbox)
+                    per_line[line_idx] = (per_line[line_idx] | rect) if line_idx in per_line else rect
+                rects.extend(per_line.values())
+    return rects
+
+
 def _context_snippet(text, start, end, window=40):
     lo = max(0, start - window)
     hi = min(len(text), end + window)
@@ -619,11 +703,12 @@ def redact_pdf(input_file, output_file, names_file, boilerplate_graphics, boiler
     
     total_redactions = 0
     
-    # Pre-compile the word-boundary regexes for names
-    name_regexes = {}
+    # Pre-compile the character-stream patterns for names (see find_name_rects).
+    name_patterns = []
     for name in names_to_redact:
-        pattern = re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE)
-        name_regexes[name] = pattern
+        pattern = build_name_match_regex(name)
+        if pattern is not None:
+            name_patterns.append(pattern)
 
     # Build token-level name patterns to avoid in-word redaction
     single_token_names = set()
@@ -679,6 +764,13 @@ def redact_pdf(input_file, output_file, names_file, boilerplate_graphics, boiler
         # automated=False (the interactive flow redacts only the manual selections above). ---
         if automated:
           if redact_names:
+            # Character-stream matching first: catches names the PDF has run together with
+            # neighbouring punctuation ("Contact Name:Elena"), which the word-token pass below
+            # cannot see at all. The token passes still run afterwards, since they can match a
+            # name whose parts land in two different text blocks.
+            for rect in find_name_rects(page, name_patterns):
+                redact_rects_set.add(tuple(rect))
+
             tokens = []
             for w in words:
                 raw = w[4]

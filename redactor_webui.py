@@ -509,6 +509,13 @@ TEMPLATE = Template("""
   .iact-badge { font-size: 0.72em; font-weight: 700; padding: 2px 7px; border-radius: 999px; color: #fff; }
   .iact-badge.occurrence { background: var(--error); }
   .iact-badge.global { background: #b8860b; }
+  .iact-badge.region { background: #6f42c1; }
+  /* box-select mode: crosshair over the page, text layer stops swallowing the drag */
+  .iact-page-wrap.boxmode { cursor: crosshair; }
+  .iact-page-wrap.boxmode .iact-textlayer { pointer-events: none; user-select: none; }
+  .iact-rubber { position: absolute; z-index: 5; pointer-events: none;
+                 background: rgba(111,66,193,0.25); border: 1px dashed rgba(111,66,193,0.95); }
+  #iact-boxmode-btn.active { background: #6f42c1; color: #fff; border-color: #6f42c1; }
   .iact-selrow .val { flex: 1; font-family: ui-monospace, monospace; word-break: break-all; }
 </style></head>
 <body>
@@ -792,6 +799,12 @@ scan - so what you check here is exactly what gets redacted, nothing more.</p>
   <span style="background:rgba(255,210,0,0.4);padding:0 4px">yellow</span>); other matches on the
   visible pages are outlined as a preview. Document metadata is always scrubbed on save regardless.</li>
 </ul>
+<p style="color:#555"><strong>To redact an image, signature or part of a graphic</strong>, click
+<strong>&#9638; Box select</strong> above to turn it on, then drag a rectangle over the area
+(shown <span style="background:rgba(111,66,193,0.3);padding:0 4px">purple</span> in the list). There is
+no text to select on a picture, so the text-selection route above cannot reach one - this mode sends
+the rectangle straight to the redaction engine instead. Turn it back off to go back to selecting text.</p>
+
 <p style="color:#555;font-size:0.85em">Click any highlight to remove it. When you're done, set an
 output path and click <strong>Redact &rarr; save output as</strong> - redaction runs through the
 same engine as section 3 (content removed from the page stream, not covered over; metadata
@@ -801,7 +814,9 @@ scrubbed; old revisions dropped) and the viewer reloads on the new file. This pa
 <div class="row"><label>PDF to open</label><div class="path-row">
   <input type="text" id="iact_input" name="iact_input" value="{{ state.last_output_path or state.last_input_path }}">
   <button type="button" class="browse-btn" onclick="openBrowse('iact_input')">📁</button>
-  <button type="button" onclick="iactLoad()">Load</button></div></div>
+  <button type="button" onclick="iactLoad()">Load</button>
+  <button type="button" id="iact-boxmode-btn" onclick="iactToggleBoxMode()"
+          title="Drag a rectangle over an image, signature or graphic">&#9638; Box select: off</button></div></div>
 
 <div id="iact-pages"><p style="color:#eee;padding:1em">No PDF loaded.</p></div>
 
@@ -1248,6 +1263,7 @@ attachLoadingSpinner('/review/search_document', 'Searching text and metadata for
         wrap.appendChild(hlLayer);
 
         pagesEl.appendChild(wrap);
+        if (boxMode) { wrap.classList.add('boxmode'); }
         pageWraps.push({ wrap: wrap, hlLayer: hlLayer, textLayer: textLayer,
                          w: vp.width, h: vp.height });
 
@@ -1270,6 +1286,7 @@ attachLoadingSpinner('/review/search_document', 'Searching text and metadata for
   });
 
   function handleSelection() {
+    if (boxMode) { return; }   // box mode owns the drag; no text popup while it is on
     var sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) { popupHide(); return; }
     var text = sel.toString().replace(/\s+/g, ' ').trim();
@@ -1304,6 +1321,84 @@ attachLoadingSpinner('/review/search_document', 'Searching text and metadata for
     popupEl.style.top = (below + ph < window.innerHeight ? below : Math.max(8, last.top - ph - 6)) + 'px';
   }
 
+  // --- box select: drag a rectangle over anything, text or not ---
+  // The text-selection path above can only ever produce a redaction where there IS selectable
+  // text. A signature, a logo, a photo or a chart has no text layer to grab, so handleSelection()
+  // bails on the empty selection and nothing happens - which is why images could not be redacted
+  // from here at all. This mode drags a plain rectangle instead and hands it to the same
+  // manual_page_rects path the engine already accepts, so no backend change is needed.
+  var boxMode = false;
+  var drag = null;  // {wrapEl, page, x0, y0, el, rect}
+
+  window.iactToggleBoxMode = function () {
+    boxMode = !boxMode;
+    var btn = document.getElementById('iact-boxmode-btn');
+    btn.innerHTML = boxMode ? '\u25C6 Box select: ON' : '\u25C6 Box select: off';
+    btn.classList.toggle('active', boxMode);
+    pageWraps.forEach(function (pw) { pw.wrap.classList.toggle('boxmode', boxMode); });
+    if (boxMode) {
+      popupHide();
+      if (window.getSelection) { window.getSelection().removeAllRanges(); }
+    }
+    setStatus(boxMode ? 'Box select on - drag a rectangle over an image, signature or graphic.' : '');
+  };
+
+  function updateRubber(e) {
+    if (!drag) { return; }
+    var wr = drag.wrapEl.getBoundingClientRect();
+    // clamp the dragged box to the page, so a drag running off the edge cannot produce a
+    // rectangle that reaches outside the page it belongs to
+    var x0 = Math.max(Math.min(drag.x0, e.clientX), wr.left);
+    var x1 = Math.min(Math.max(drag.x0, e.clientX), wr.right);
+    var y0 = Math.max(Math.min(drag.y0, e.clientY), wr.top);
+    var y1 = Math.min(Math.max(drag.y0, e.clientY), wr.bottom);
+    drag.rect = { left: x0, top: y0, right: x1, bottom: y1,
+                  width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) };
+    drag.el.style.left = (x0 - wr.left) + 'px';
+    drag.el.style.top = (y0 - wr.top) + 'px';
+    drag.el.style.width = drag.rect.width + 'px';
+    drag.el.style.height = drag.rect.height + 'px';
+  }
+
+  pagesEl.addEventListener('mousedown', function (e) {
+    if (!boxMode || e.button !== 0) { return; }
+    // a click on an existing highlight is "remove this one", not the start of a new box
+    if (e.target.classList && e.target.classList.contains('iact-hl')) { return; }
+    var wrapEl = e.target.closest ? e.target.closest('.iact-page-wrap') : null;
+    if (!wrapEl) { return; }
+    var pageNo = parseInt(wrapEl.dataset.page, 10);
+    if (!pageNo) { return; }
+    e.preventDefault();
+    var el = document.createElement('div');
+    el.className = 'iact-rubber';
+    wrapEl.appendChild(el);
+    drag = { wrapEl: wrapEl, page: pageNo, x0: e.clientX, y0: e.clientY, el: el, rect: null };
+    updateRubber(e);
+  });
+
+  // on document, not on the page element: a drag that ends outside the viewer still finishes
+  document.addEventListener('mousemove', function (e) { if (drag) { updateRubber(e); } });
+
+  document.addEventListener('mouseup', function (e) {
+    if (!drag) { return; }
+    updateRubber(e);
+    var d = drag;
+    drag = null;
+    if (d.el.parentNode) { d.el.parentNode.removeChild(d.el); }
+    if (!d.rect || d.rect.width < 4 || d.rect.height < 4) {
+      setStatus('Box too small - drag a larger rectangle.', true);
+      return;
+    }
+    selections.push({
+      id: ++seq, page: d.page, mode: 'occurrence', kind: 'region',
+      text: 'image / region (p' + d.page + ')',
+      rects: [normRect(d.rect, d.wrapEl.getBoundingClientRect())],
+    });
+    renderSelectionList();
+    renderHighlights();
+    setStatus('Region added on page ' + d.page + '. Add more, then "Redact -> save output as".');
+  });
+
   function normRect(r, wrapRect) {
     return {
       x0: (r.left - wrapRect.left) / wrapRect.width,
@@ -1334,7 +1429,8 @@ attachLoadingSpinner('/review/search_document', 'Searching text and metadata for
 
   function renderSelectionList() {
     if (!selections.length) {
-      listEl.innerHTML = '<p style="color:#777;font-size:0.85em">None yet - select some text above.</p>';
+      listEl.innerHTML = '<p style="color:#777;font-size:0.85em">None yet - select some text above, '
+                       + 'or turn on Box select and drag over an image.</p>';
       return;
     }
     listEl.innerHTML = '';
@@ -1342,8 +1438,9 @@ attachLoadingSpinner('/review/search_document', 'Searching text and metadata for
       var row = document.createElement('div');
       row.className = 'iact-selrow';
       var badge = document.createElement('span');
-      badge.className = 'iact-badge ' + s.mode;
-      badge.textContent = (s.mode === 'global' ? 'ALL + META' : 'THIS SPOT');
+      badge.className = 'iact-badge ' + (s.kind === 'region' ? 'region' : s.mode);
+      badge.textContent = s.kind === 'region' ? 'REGION'
+                          : (s.mode === 'global' ? 'ALL + META' : 'THIS SPOT');
       var val = document.createElement('span');
       val.className = 'val';
       val.textContent = s.text + '  (p' + s.page + ')';
